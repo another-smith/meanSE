@@ -1,0 +1,220 @@
+---
+title: "How to make a mean $\\pm$ standard error table"
+author: ''
+date: "11/9/2020"
+output:  html_document 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE) 
+```
+ 
+
+Scientific publications often require tables that summarize data using special symbols and font styles. Such tables often are time consuming to put together as the summary statistics would be calculated then the information put into the table.  Manually making the table can be time consuming and lead to errors in the entries.  There are a variety of packages that help make the process easier and we show one approach below.  Most of these packages produce a table with factors as columns and variables as rows however our interest is in putting variables in the rows. The table is output as an HTML table but last part of the tutorial discusses coding to output the table to a CSV file or a WORD file.
+
+In environmental and ecological studies data are often collected on multiple variables and factors, and interest is in a basic table with summary statistics such as the mean and standard error.  The columns are variables and rows are factor levels. Here we show how to make such a table.  The process involves several steps after reading and cleaning the data:
+  
+  1. Create a function to output the mean and standard error (SE), rounding to the appropriate number of digits.  The function returns the mean and SE as a single cell, using coding to add the plus minus symbol.
+  2. Create the table using select(), group_by() and summarize_all() to select variables and summarize by groups.
+  3. Use kableExtra to make the html table after additional reformatting.  Indentation is added to better show the different treatments.
+  4. If desired, output to a CSV for editing or to WORD.  Some editing is required to finalize the table.
+  
+  As an example data from a Florida peat collapse study is used (the idea is that sea level rise will cause changes in soil that has a high peat composition).  A table similar to Table 6 in Wilson et.al., Salinity pulses interact with seasonal dry-down to increase ecosystem carbon loss in marshes in Florida Everglades, Ecological Applications 2018, 2092-2108 is created. 
+  
+  The paper can be downloaded here: https://benjaminjwilson.files.wordpress.com/2019/03/wilson-et-al-2018_eco-apps_salinity-pulses-interact-with-seasonal-dry-down-to-increase-ecosystem.pdf.  See their table 6.
+   
+ The data set is read directly as a comma separated file from the LTER web site below. Other information including an R file to read the data is available at: 
+  https://doi.org/10.6073/pasta/0412d0e992558af65cf22110ef8f0e1b
+
+## Libraries and data input
+Several packages are needed.
+```{r, message=FALSE}
+ library(readr) # reading in the data
+ library(kableExtra)  # make HTML tables
+ library(tidyverse)  # for stacking and selecting
+ library(dplyr) # used to create ratios for one column
+```
+
+```{r}
+# read in the data and print a few values
+infile <- "https://pasta.lternet.edu/package/data/eml/knb-lter-fce/1221/1/53ccd71610870db0ab987e3412eb9faa" 
+
+ CNP <- read.csv(infile, header=T)  
+```
+   The variables of interest are C,N,P.  These will be columns  of interest along with their ratios, and summaries are computed on combinations of site, treatment and date.
+```{r}
+ head(CNP[ ,1:7]) #just print some relevant observations - only interested in cols 1-7
+``` 
+   
+##   1. Create a function to output the mean and standard error, rounding to the appropriate number of digits 
+   The table will consist of means plus or minus the standard error for the three variables and ratios make up the last column.
+  The standard summary() does not compute the standard error (packages like psych will) so a function is used to make the calculations and combine results into a single character variable using paste(). Special coding is used to get the plus/minus symbol.
+  Also signif() is used to report a specific number of digits after rounding to two decimals using round(). One minor problem is that rounding removes trailing zeros. If you want to pad zeros use round_tidy() from the finafit package (note this function coverts numbers to character).
+ 
+The paste function automatically adds a space between each element - add sep="" if needed to remove the space.  Finally, there are some NAs and these are simply reported as NAs without plus or minus. The str_detect function is used to make sure the values are NAs.
+
+ Two other functions are also provided in case interest is in mean and standard deviation or mean and range.
+  
+```{r}
+# function to calculate mean plus/minus std error
+meanse <- function(x, ...){
+  mean1 <-   signif(round(mean(x, na.rm=T),2), 3)   #calculate mean and round
+  se1 <- signif(round(sd(x, na.rm=T)/sqrt(sum(!is.na(x))), 2),2) # std error - round adding zeros
+  out <- paste(mean1, "$\\pm$", se1)  # paste together mean plus/minus and standard error
+    if (str_detect(out,"NA")) {out="NA"}   # if missing do not add plusminus
+  return(out)
+}
+```
+```{r}
+# This function will output mean with sd in parentheses
+meansd <- function(x, ...){
+  mean1 <-   signif(round(mean(x, na.rm=T),2), 3)   #calculate mean and round
+  sd1 <- signif(round(sd(x, na.rm=T), 2),2) # std deviation - round adding zeros
+  psd <- paste("(", sd1, ")", sep="") #remove spaces
+  out <- paste(mean1, psd)  # paste together mean  standard deviation
+    if (str_detect(out,"NA")) {out="NA"}   # if missing do not add sd
+  return(out)
+}
+```
+
+```{r}
+#This function will give the mean with the range
+meanrng <- function(x, ...){
+  mean1 <-   signif(round(mean(x, na.rm=T),2), 3)   #calculate mean and round
+ range1 <- range(x, na.rm=T) 
+ rup <- signif(round(range1[2],2), 3)
+ rlow <- signif(round(range1[1],2), 3)   # range
+ p_range <- paste("(", rlow,", ",rup, ")", sep="")
+  out <- paste(mean1, p_range)  # paste and range
+    if (str_detect(out,"Na")) {out="NA"}   # if missing do not add range -note it is Na
+  return(out)
+}
+
+```
+
+## 2. Select variables, groups and creating the table
+Next, select the columns of interest using the select() function to pick the factors to summarize over and the variables to summarize.
+
+Then use group_by() to combine the factors that summary statistics are calculated over.
+Finally, summarise_all is used with the function to calculate the mean+-se.  Means are later computed and used to form ratios for C:N:P, the last column in the table.
+
+```{r}  
+# select columns
+# then form grouping variables
+# then calculate summary statistics using function
+t1 <- CNP %>% select(c(Site, Treatment, Date, C, N, P)) %>%  
+  group_by(Site, Date, Treatment) %>%       
+   summarise_all(.funs = meanse)           
+```
+
+```{r}
+# calculate means and compute CNP ratios for the last column
+  Dsum  <- CNP %>% group_by(Site, Date, Treatment)  %>% summarize_all(mean, na.rm=TRUE) 
+  Dsum$cp <-  round(1000*Dsum$C/Dsum$P)
+  Dsum$np <-  round(1000*Dsum$N/Dsum$P)
+  # Dsum # print if you want
+
+  # paste together ratios and do not use space as separator
+  t1$ratio <- paste(Dsum$cp,":",Dsum$np,":1", sep="")
+# Replace the ratio with a missing value NA if P is missing
+  # note ifelse is needed as these are vectors
+  t1$ratio <- ifelse(is.na(Dsum$P), "NA", t1$ratio) 
+
+``` 
+  This is the table that results.  Note that C,N and P are character variables that combine means and standard errors.
+```{r}
+t1 <- as.data.frame(t1)
+t1 # print the table
+```
+
+##   3. Use kableExtra to make an html table after additional reformatting.
+The kable() function can be used to make a HTML table, however, reformatting with kableExtra can produce a better table.
+  This requires creating variables associated with the different columns
+  and adding labels with special symbols or formats.  First, create vectors associated with
+  the three variables, then combine with labeling to make the table with kbl(). There are some special considerations:
+ 
+  Tables in publications often have blanks when a factor level repeats
+  so indentation is added that include blanks associated with layout.  Also the authors 
+  changed the date to a year and treatment to specific names in the table in the publication, so the date values are changed to Year1 or Year2 and treatment level to +AMB and +SALT.
+
+Finally blank rows are combined with the summary rows to spread the table vertically and keep just the columns of interest.  Again, this is to match the look of the table in the publication.
+
+```{r}
+ # Add blank row to space out rows of results
+ blankrow <-  c( " "," "," ","") 
+ t3 <- rbind(blankrow, blankrow, t1[1:2,4:7],
+                  blankrow, t1[3:4,4:7],blankrow,blankrow,
+                  t1[5:6,4:7],blankrow,t1[7:8,4:7])
+ 
+```
+
+Finally add the row labels and column labels.  Add a column of row labels to the data set to make the data frame to print.  Set the row names to null.
+
+Add the column names, add line breaks for Site, time and treatment and also move other column names to appropriate locations. 
+  Then create labels for the columns in the table.  Note the Greek letter $\\mu$ is obtained using '$\\mu$'
+```{r}
+
+ Treatment <- rbind("BW","Year1","+AMB","+SALT","Year2","+AMB","+SALT", "FW","Year1","+AMB","+SALT","Year2","+AMB","+SALT")
+
+ toprint <- cbind(Treatment, t3)
+ row.names(toprint) = NULL  # drop the rownames from the dataframe
+   colnames(toprint) <-  c(paste("and treatment"),"\nC (mg/g)","\nN (mg/g)",
+                          paste("\nP (","$\\mu$g/g)" ,sep="" ),"\nC:N:P")
+ # note the first column will have extra factors added below as part of the header 
+```
+  Use kableExtra to print the new table as html.  A footnote is added
+  Use $name$ to make italic and the coding for plus/minus
+  No title is needed. The factors are indented using add_indent.
+```{r}
+
+  x<-kbl(toprint )%>%   # select format for the table
+  kable_classic(full_width = F, html_font = "Cambria" )  %>%
+  footnote(general =paste( "$Notes:$ Values are mean",     # add a footnote
+                           "\u00b1" , "SE ($n$=6)", "\nNA, Not available"),
+           footnote_as_chunk = TRUE,
+           general_title = "") %>% #supress the title
+add_header_above( c("Site, time"=1," "=4), align="l", line="FALSE")
+# add indents for the first column to indent the treatment levels
+xa<- add_indent(x,c(2,5,9,12), level_of_indent = 0.5)
+add_indent(xa,c(3,4,6,7,10,11,13,14), level_of_indent = 1)
+```
+This output is consistent with the publication but might not be appealing because of the blank rows.  Another option is to have columns associated with each treatment.  First they are put into a data frame and then it is combined with the summary table:
+```{r}
+# create a data frame with labels for the treatments
+cols1_3 = data.frame(Site = c("BW"," "," ",""," FW"," "," "," "),
+                     Year = c("Year1"," ","Year2", " ","Year1"," ","Year2", " "), 
+                     Treatment = c("+AMB","+SALT","+AMB","+SALT",    
+                                "+AMB","+SALT","+AMB","+SALT"))
+# combine with summary table
+toprint2 <- cbind(cols1_3,t1[,4:7])
+# add the column names
+   colnames(toprint2) <-  c("Site","Time", "Treatment","C (mg/g)","N (mg/g)","P ($\\mu$g/g)","C:N:P")
+
+ x2<-kbl(toprint2 )%>%   # select format for the table
+  kable_classic(full_width = F, html_font = "Cambria" )  %>%
+  footnote(general =paste( "$Notes:$ Values are mean",     # add a footnote
+                           "\u00b1" , "SE ($n$=6)", "\nNA, Not available"),
+           footnote_as_chunk = TRUE,
+           general_title = "")  #supress the title
+x2
+```
+## 4. Output to csv or word
+  Many researchers use WORD for writing publications.  The basic table results can be written to a csv file or pasted into WORD.  It is also easy to output to latex.
+  Some editing would be required to format the table for publication.
+  
+```{r}
+#  write.csv(t3,'~/tab6.csv') # not run
+```
+
+  The final table (toprint) can also be output to csv however there will be a minor problem in that the + symbol in the name +SALT or +AMB will be interpreted as part of an equation and is
+  read as "=+" so one would have to remove the = in the csv file.
+  The Greek letters also do not transfer so additional editing would be required.  
+  
+What is easiest is to paste one of the above tables into EXCEL or WORD and edit rather then write out the file as the special symbols do not transfer properly.  If a word file is useful a separate program can be used with kable() to produce the table.
+```{r}
+#  write.csv(toprint,'~/table6.csv') #not run or recommended
+```
+  Note that we used one function that formatted the results (mean +- se) using the same number of digits for all variables.  If a different number of digits are desired, each variable can be
+  processed separately into separate data tables that are then merged. 
+
+ 
